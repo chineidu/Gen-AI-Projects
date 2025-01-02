@@ -2,9 +2,9 @@ QA_and_RAG:
   path: QA_and_RAG
   chinook_db_path: sqlite:///${.path}/data/sql/chinook.db
   sql_agent_prompt: |
-    Given the following user question, corresponding SQL query, and SQL query result, answer the user question.
+    Based on the database query result, provide a complete sentence answer to the user's question.
+
     Question: {question}
-    SQL Query: {query}
     SQL Result: {result}
     Answer:
 

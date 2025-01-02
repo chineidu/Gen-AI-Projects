@@ -20,6 +20,16 @@ class SQLFromTabularData(BaseModel):
     ----------
     full_db_path : str
         Complete SQLite connection string
+
+    Example
+    -------
+    >>> db = SQLFromTabularData(
+    ...     file_path="data/input_data.csv",
+    ...     db_path="data/my_db.db",
+    ...     table_name="my_table"
+    ... )
+    >>> db.run()
+
     """
 
     file_path: str = Field(pattern=r"\.(csv|parquet)")
