@@ -4,6 +4,7 @@ import gradio as gr
 from QA_and_RAG.src.utils.chat_utils import ModelManager
 from QA_and_RAG.src.utils.utilities import UISettings, upload_file
 from QA_and_RAG.src.chatbot import ChatType
+from config import settings, setup_langsmith_tracing
 
 
 @lru_cache(maxsize=1)
@@ -15,6 +16,9 @@ def create_qa_interface() -> gr.Blocks:
     gr.Blocks
         The Gradio Blocks interface containing all UI components and event handlers.
     """
+    if settings.IS_SUCCESSFULLY_LOADED:
+        setup_langsmith_tracing()
+
     bot_instance: ModelManager = ModelManager()
 
     with gr.Blocks() as demo:

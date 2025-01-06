@@ -104,7 +104,7 @@ class ProcessFiles(BaseModel):
                     "content": "Uploaded files are ready. Please ask your question",
                 }
             )
-            
+
             return ("", self.chatbot)
 
         except Exception as e:
@@ -284,3 +284,6 @@ class UISettings:
             print(f"You upvoted this response: {data.value}")
         else:
             print(f"You downvoted this response: {data.value}")
+
+
+

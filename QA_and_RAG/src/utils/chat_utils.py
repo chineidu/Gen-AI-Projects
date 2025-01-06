@@ -1,8 +1,8 @@
 import logging
-from typing import Optional, Any
+from typing import Optional
 from functools import wraps
 
-from QA_and_RAG.src.chatbot import Chatbot, ChatType
+from QA_and_RAG.src.chatbot import Chatbot, ChatType, SQLChatbot
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class ModelManager:
     """
 
     _instance: Optional["ModelManager"] = None
-    _model: Optional[Chatbot] = None
+    _model: Optional[Chatbot | SQLChatbot] = None
 
     def __new__(cls) -> "ModelManager":
         """Create a new instance of ModelManager if one doesn't exist.
@@ -76,7 +76,8 @@ class ModelManager:
         """
         logger.info("Loading chatbot model")
         try:
-            self._model = Chatbot()
+            # self._model = Chatbot()
+            self._model = SQLChatbot()
             logger.info("Chatbot model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load chatbot model: {e}")
