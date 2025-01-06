@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str | None = None
     IS_SUCCESSFULLY_LOADED: bool = False
+    WORKING_DIR: str = str(Path(__file__).parent.parent)
 
 
 settings: Settings = Settings()
