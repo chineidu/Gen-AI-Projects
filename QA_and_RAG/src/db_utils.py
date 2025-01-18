@@ -6,6 +6,7 @@ import polars as pl
 from pydantic import BaseModel, computed_field, Field
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException
+from sentence_transformers import SentenceTransformer
 
 from config import config
 
@@ -163,15 +164,26 @@ def run_sql_query(query: str, connection: Any) -> pl.DataFrame | None:
 
 
 class VectorDBManager(BaseModel):
-    """
+    """A class to manage vector database operations including file processing and data storage.
 
-    # Example
-    # -------
-    # >>> process_files = ProcessFiles(
-    # ...     files_dir="data/uploads/",
-    # ...     chatbot=[],
-    # ... )
-    # >>> process_files.run()
+    Attributes
+    ----------
+    files_dir : str | Path | list[str | Path]
+        Directory path or list of file paths containing data files
+    chatbot : list[str]
+        List to store chat messages
+    db_path : str
+        Path to the vector database
+    model_name : str
+        Name of the encoder model to use
+
+    Examples
+    --------
+    >>> vector_db = VectorDBManager(
+    ...     files_dir="data/uploads/",
+    ...     chatbot=[],
+    ... )
+    >>> vector_db.run()
     """
 
     files_dir: str | Path | list[str | Path] = Field(
@@ -179,6 +191,9 @@ class VectorDBManager(BaseModel):
     )
     chatbot: list[str] = Field(default_factory=list)
     db_path: str = Field(default_factory=lambda: config.QA_and_RAG.uploaded_db_path)
+    model_name: str = Field(
+        default_factory=lambda: config.QA_and_RAG.encoder_model.model
+    )
 
     @computed_field
     @property
@@ -196,25 +211,26 @@ class VectorDBManager(BaseModel):
 
             return [str(fp) for fp in file_paths if fp.is_file()]
 
-    # @computed_field
-    # @property
-    # def full_db_path(self) -> str:
-    #     """Get the full SQLite database connection string.
+    @computed_field
+    @property
+    def encoder(self) -> Any:
+        """Get the sentence transformer encoder model.
 
-    #     Returns
-    #     -------
-    #     str
-    #         SQLite connection string in format 'sqlite:///path/to/db'
-    #     """
-    #     return f"sqlite:///{self.db_path}"
+        Returns
+        -------
+        SentenceTransformer
+            Initialized sentence transformer model
+        """
+        return SentenceTransformer(self.model_name)
 
     def _process_data(self) -> tuple[str, list[str]] | None:
-        """Process CSV and Parquet files into SQLite database.
+        """Process data files and store them in vector database.
 
         Returns
         -------
         tuple[str, list[str]] | None
-            Empty string and chatbot messages list if successful, None if error occurs
+            Tuple containing empty string and chatbot messages if successful,
+            None if processing fails
         """
         if isinstance(self.files_dir, list):
             file_paths: list[str] = self.files_dir
@@ -238,9 +254,10 @@ class VectorDBManager(BaseModel):
                 )
                 if df is None:
                     raise ValueError(f"Unsupported file format: {file_extension}")
-                self._create_database(data=df, table_name=file_name)
+                self._create_collection(collection_name=file_name)
+                self._upsert_data(data=df, collection_name=file_name)
             print("==============================")
-            print("All csv/parquet files are saved into the sql database.")
+            print("All csv/parquet files are saved into the vector database.")
             self.chatbot.append(
                 {
                     "role": "assistant",
@@ -255,79 +272,104 @@ class VectorDBManager(BaseModel):
             return None
 
     def _create_connection(self) -> QdrantClient | None:
+        """Create connection to Qdrant vector database.
+
+        Returns
+        -------
+        QdrantClient | None
+            Qdrant client if connection successful, None otherwise
+        """
         client = QdrantClient(url="http://localhost:6333")
-        
+
         try:
             client.get_collections().collections
             print("Qdrant server is running.")
             return client
-        
+
         except ResponseHandlingException as e:
             print(f"Qdrant server is not running. Error: {e}")
             return None
 
-    def _create_database(self, data: pl.DataFrame, table_name: str) -> None:
-        """Create or update database table from the input data.
+    def _create_collection(self, collection_name: str) -> None:
+        """Create a new collection in the vector database.
+
+        Parameters
+        ----------
+        collection_name : str
+            Name of the collection to create
+
+        Returns
+        -------
+        None
+        """
+        client: QdrantClient = self._create_connection()
+
+        if client.collection_exists(collection_name=collection_name):
+            print(f"Collection '{collection_name}' already exists.")
+
+        else:
+            print(f"Creating collection '{collection_name}'.")
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=models.VectorParams(
+                    size=config.QA_and_RAG.encoder_model.embedding_dimension,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+
+        return None
+
+    def _upsert_data(self, data: pl.DataFrame, collection_name: str) -> None:
+        """Insert or update data in the vector database collection.
 
         Parameters
         ----------
         data : pl.DataFrame
-            Polars DataFrame containing the data to write, shape (n_rows, n_columns)
-        table_name : str
-            Name of the table to create/update
+            DataFrame containing the data to upsert
+        collection_name : str
+            Name of the collection to upsert data into
 
         Returns
         -------
         None
         """
-        try:
-            data.write_database(
-                table_name=table_name,
-                connection=self.full_db_path,
-                if_table_exists="replace",
-            )
-            print(
-                f"DB at {self.full_db_path} successfully "
-                f"created/updated with {table_name} table."
-            )
-
-        except Exception as e:
-            print(f"Error creating/updating the DB: {e}")
-
+        client: QdrantClient = self._create_connection()
+        documents: list[dict[str, Any]] = data.to_dicts()
+        client.upsert(
+            collection_name=collection_name,
+            points=[
+                models.PointStruct(
+                    id=idx, vector=self.embed_document(doc["description"]), payload=doc
+                )
+                for idx, doc in enumerate(documents)
+            ],
+        )
+        print(f"Data from '{collection_name}' is saved into the vector database.")
         return None
 
-    def _validate_db(self) -> None:
-        """Validate database by inspecting available tables.
+    def embed_document(self, document: str) -> list[float]:
+        """Embed a document using an embedding model.
+
+        Parameters
+        ----------
+        document : str
+            Text document to embed
 
         Returns
         -------
-        None
-            Prints database path and available table names
+        list[float]
+            Document embedding vector
         """
-        try:
-            conn: Engine = self._create_connection()
-            insp: Inspector = inspect(conn)
+        return self.encoder.encode(document).tolist()
 
-            table_names: list[str] = insp.get_table_names()
-            print(
-                "\nValidating database: "
-                "\n================================"
-                f"\nAvailable table Names: {table_names}"
-                "\n================================"
-            )
-        except Exception as e:
-            print(f"Error validating the DB: {e}")
-
-    def run(self) -> None:
-        """Execute database creation and validation.
+    def run(self) -> tuple[str, list[str]] | None:
+        """Execute the data processing pipeline.
 
         Returns
         -------
-        None
-            Processes data and validates database
+        tuple[str, list[str]] | None
+            Tuple containing empty string and chatbot messages if successful,
+            None if processing fails
         """
         input_txt, chatbot = self._process_data()
-        self._validate_db()
-
         return input_txt, chatbot
-
