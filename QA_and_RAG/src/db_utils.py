@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from sqlalchemy import create_engine, inspect, Inspector
 import polars as pl
 from pydantic import BaseModel, computed_field, Field
@@ -8,7 +8,7 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException
 from sentence_transformers import SentenceTransformer
 
-from config import config
+from config import config, settings
 
 
 class SQLFromTabularData(BaseModel):
@@ -186,6 +186,7 @@ class VectorDBManager(BaseModel):
     >>> vector_db.run()
     """
 
+    _client: ClassVar[QdrantClient | None] = None
     files_dir: str | Path | list[str | Path] = Field(
         default_factory=lambda: Path(config.QA_and_RAG.uploaded_files_path)
     )
@@ -194,6 +195,27 @@ class VectorDBManager(BaseModel):
     model_name: str = Field(
         default_factory=lambda: config.QA_and_RAG.encoder_model.model
     )
+
+    @classmethod
+    def _get_client(cls) -> QdrantClient | None:
+        """Get the QdrantClient instance."""
+        if cls._client is None:
+            try:
+                cls._client: QdrantClient = QdrantClient(
+                    host=settings.QDRANT_HOST,
+                    port=settings.QDRANT_PORT,
+                    api_key=settings.QDRANT_API_KEY.get_secret_value(),
+                    https=False,
+                )
+                # Verify connection
+                cls._client.get_collections().collections
+                print("Qdrant server is running.")
+
+            except ResponseHandlingException as e:
+                print(f"Qdrant server is not running. Error: {e}")
+                return None
+
+        return cls._client
 
     @computed_field
     @property
@@ -238,10 +260,13 @@ class VectorDBManager(BaseModel):
             file_paths: list[str] = self.full_files_dir
         try:
             for file_path in file_paths:
+                print(f"Processing file: {file_path}")
                 file_names_with_extensions: str = os.path.basename(file_path)
                 file_name: str
                 file_extension: str
                 file_name, file_extension = os.path.splitext(file_names_with_extensions)
+                if file_extension not in [".csv", ".parquet"]:
+                    continue
 
                 df: pl.DataFrame = (
                     pl.read_csv(file_path)
@@ -271,25 +296,6 @@ class VectorDBManager(BaseModel):
             print(f"Error loading the data: {e}")
             return None
 
-    def _create_connection(self) -> QdrantClient | None:
-        """Create connection to Qdrant vector database.
-
-        Returns
-        -------
-        QdrantClient | None
-            Qdrant client if connection successful, None otherwise
-        """
-        client = QdrantClient(url="http://localhost:6333")
-
-        try:
-            client.get_collections().collections
-            print("Qdrant server is running.")
-            return client
-
-        except ResponseHandlingException as e:
-            print(f"Qdrant server is not running. Error: {e}")
-            return None
-
     def _create_collection(self, collection_name: str) -> None:
         """Create a new collection in the vector database.
 
@@ -302,7 +308,9 @@ class VectorDBManager(BaseModel):
         -------
         None
         """
-        client: QdrantClient = self._create_connection()
+        client: QdrantClient = self._get_client()
+        if client is None:
+            return None
 
         if client.collection_exists(collection_name=collection_name):
             print(f"Collection '{collection_name}' already exists.")
@@ -319,6 +327,19 @@ class VectorDBManager(BaseModel):
 
         return None
 
+    def _get_collection_names(self) -> list[str]:
+        """Get the names of all collections in the vector database.
+
+        Returns
+        -------
+        list[str]
+            List of collection names
+        """
+        client: QdrantClient = self._get_client()
+        if client is None:
+            return []
+        return [collection.name for collection in client.get_collections().collections]
+
     def _upsert_data(self, data: pl.DataFrame, collection_name: str) -> None:
         """Insert or update data in the vector database collection.
 
@@ -333,7 +354,10 @@ class VectorDBManager(BaseModel):
         -------
         None
         """
-        client: QdrantClient = self._create_connection()
+        client: QdrantClient = self._get_client()
+        if client is None:
+            return None
+
         documents: list[dict[str, Any]] = data.to_dicts()
         client.upsert(
             collection_name=collection_name,
