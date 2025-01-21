@@ -1,5 +1,6 @@
 from pathlib import Path
 
+
 PACKAGE_ROOT_PATH: Path = Path(__file__).parent
 
 
