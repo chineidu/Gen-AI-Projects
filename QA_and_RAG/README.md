@@ -8,6 +8,7 @@
   - [Table of Contents](#table-of-contents)
   - [Setup](#setup)
     - [Create The Datasets](#create-the-datasets)
+  - [Start The Application](#start-the-application)
 
 ## Setup
 
@@ -29,4 +30,11 @@ sqlite3 data/chinook.db < data/sql/chinook_sqlite.sql
 # OR (Interactive shell)
 sqlite3 data/chinook.db    
 .read ./data/sql/chinook_sqlite.sql
+```
+
+## Start The Application
+
+```sh
+python -m QA_and_RAG.app
+
 ```

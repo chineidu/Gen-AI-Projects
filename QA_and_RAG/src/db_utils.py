@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import time
 from typing import Any, ClassVar
 from sqlalchemy import create_engine, inspect, Inspector
 import polars as pl
@@ -138,31 +139,6 @@ class SQLFromTabularData(BaseModel):
         self._validate_db()
 
 
-def run_sql_query(query: str, connection: Any) -> pl.DataFrame | None:
-    """Execute SQL query and return results as a Polars DataFrame.
-
-    Parameters
-    ----------
-    query : str
-        SQL query string to execute
-    connection : Any
-        SQLAlchemy connection object
-
-    Returns
-    -------
-    pl.DataFrame | None
-        Query results as a Polars DataFrame, or None if error occurs
-    """
-    try:
-        result: pl.DataFrame = pl.read_database(
-            query=query, connection=connection.connect()
-        )
-        return result
-    except Exception as e:
-        print(f"Error running the query: {e}")
-        return None
-
-
 class VectorDBManager(BaseModel):
     """A class to manage vector database operations including file processing and data storage.
 
@@ -187,6 +163,7 @@ class VectorDBManager(BaseModel):
     """
 
     _client: ClassVar[QdrantClient | None] = None
+    _max_retries: ClassVar[int] = 3
     files_dir: str | Path | list[str | Path] = Field(
         default_factory=lambda: Path(config.QA_and_RAG.uploaded_files_path)
     )
@@ -200,21 +177,30 @@ class VectorDBManager(BaseModel):
     def _get_client(cls) -> QdrantClient | None:
         """Get the QdrantClient instance."""
         if cls._client is None:
-            try:
-                cls._client: QdrantClient = QdrantClient(
-                    host=settings.QDRANT_HOST,
-                    port=settings.QDRANT_PORT,
-                    api_key=settings.QDRANT_API_KEY.get_secret_value(),
-                    https=False,
-                )
-                # Verify connection
-                cls._client.get_collections().collections
-                print("Qdrant server is running.")
+            for attempt in range(cls._max_retries):
+                try:
+                    cls._client: QdrantClient = QdrantClient(
+                        host=settings.QDRANT_HOST,
+                        port=settings.QDRANT_PORT,
+                        api_key=settings.QDRANT_API_KEY.get_secret_value(),
+                        https=False,
+                    )
+                    # Verify connection
+                    cls._client.get_collections().collections
+                    print("Qdrant server is running.")
+                    return cls._client
 
-            except ResponseHandlingException as e:
-                print(f"Qdrant server is not running. Error: {e}")
-                return None
+                except ResponseHandlingException as e:
+                    if attempt == cls._max_retries - 1:
+                        print(f"Qdrant server is not running. Error: {e}")
+                        return None
+                    else:
+                        print(
+                            f"Failed to connect to Qdrant server. Retrying... ({attempt + 1}/{cls._max_retries})"
+                        )
+                        time.sleep(1.2)
 
+        # Return the existing client
         return cls._client
 
     @computed_field
@@ -243,7 +229,10 @@ class VectorDBManager(BaseModel):
         SentenceTransformer
             Initialized sentence transformer model
         """
-        return SentenceTransformer(self.model_name)
+        return SentenceTransformer(
+            self.model_name,
+            cache_folder=config.QA_and_RAG.encoder_model.cache_folder,
+        )
 
     def _process_data(self) -> tuple[str, list[str]] | None:
         """Process data files and store them in vector database.
@@ -359,6 +348,7 @@ class VectorDBManager(BaseModel):
             return None
 
         documents: list[dict[str, Any]] = data.to_dicts()
+        print(f"Upserting data into '{collection_name}' collection.")
         client.upsert(
             collection_name=collection_name,
             points=[
@@ -397,3 +387,28 @@ class VectorDBManager(BaseModel):
         """
         input_txt, chatbot = self._process_data()
         return input_txt, chatbot
+
+
+def run_sql_query(query: str, connection: Any) -> pl.DataFrame | None:
+    """Execute SQL query and return results as a Polars DataFrame.
+
+    Parameters
+    ----------
+    query : str
+        SQL query string to execute
+    connection : Any
+        SQLAlchemy connection object
+
+    Returns
+    -------
+    pl.DataFrame | None
+        Query results as a Polars DataFrame, or None if error occurs
+    """
+    try:
+        result: pl.DataFrame = pl.read_database(
+            query=query, connection=connection.connect()
+        )
+        return result
+    except Exception as e:
+        print(f"Error running the query: {e}")
+        return None

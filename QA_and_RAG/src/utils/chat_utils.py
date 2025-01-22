@@ -38,14 +38,12 @@ class ModelManager:
     ----------
     _instance : ModelManager | None
         Singleton instance of the class
-    _model : Chatbot | None
-        The model instance
-    _config : dict
-        Model configuration
+    _model : Chatbot | SQLChatbot | None
+        The model instance for handling chat interactions
     """
 
-    _instance: Optional["ModelManager"] = None
-    _model: Optional[Chatbot | SQLChatbot] = None
+    _instance: "ModelManager" | None = None
+    _model: Chatbot | SQLChatbot | None = None
 
     def __new__(cls) -> "ModelManager":
         """Create a new instance of ModelManager if one doesn't exist.
@@ -62,12 +60,17 @@ class ModelManager:
         return cls._instance
 
     def _initialize(self) -> None:
-        """Initialize the ModelManager instance."""
+        """Initialize the ModelManager instance.
+
+        Initializes the model by calling _load_model().
+        """
         self._load_model()
 
     @handle_model_errors
     def _load_model(self) -> None:
         """Load the model and its dependencies.
+
+        Initializes the SQLChatbot instance and assigns it to _model.
 
         Raises
         ------
@@ -96,15 +99,22 @@ class ModelManager:
 
         Parameters
         ----------
+        chatbot : list[tuple[str, str]]
+            List of tuples containing conversation history (user message, bot response)
         message : str
             Input message to the chatbot
         chat_type : ChatType
-            Type of chat interaction (stored SQL DB, stored flat file SQL DB, or uploaded flat file SQL DB).
+            Type of chat interaction (stored SQL DB, stored flat file SQL DB, or uploaded flat file SQL DB)
+        app_functionality : str
+            Description of the application's functionality
+        db_path : str | None, optional
+            Path to the database file, by default None
 
         Returns
         -------
-        str
-            Response from the chatbot
+        tuple[str, list[tuple[str, str]]] | None
+            Tuple containing the response string and updated conversation history,
+            or None if response generation fails
 
         Raises
         ------
@@ -121,7 +131,10 @@ class ModelManager:
 
     @handle_model_errors
     def clear_cache(self) -> None:
-        """Clear the cached chatbot and reload it."""
+        """Clear the cached chatbot and reload it.
+
+        Resets the model instance to None and reloads it using _load_model().
+        """
         logger.info("Clearing model cache")
         self._model = None
         self._load_model()

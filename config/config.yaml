@@ -21,3 +21,4 @@ QA_and_RAG:
   encoder_model:
     model: all-MiniLM-L6-v2
     embedding_dimension: 384
+    cache_folder: ${oc.env:WORKING_DIR}/models/cache
